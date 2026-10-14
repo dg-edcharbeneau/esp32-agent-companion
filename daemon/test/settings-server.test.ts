@@ -33,6 +33,8 @@ class FakeService extends EventEmitter {
   desktop: Array<{visible?: boolean; backdrop?: string; sounds?: boolean; volume?: number; character?: string}> = [];
   usage: Array<{enabled?: boolean; window?: string}> = [];
   voice: string[] = [];
+  pluginActions: string[] = [];
+  speechTests: Array<string | undefined> = [];
   usbFirmware = {release: '0.7.0', releaseId: null, flasher: true, port: '/dev/test', unanswered: false,
                  installing: null, last: null};
   firmware = {device: 'aaaaaaaaaaaaaaaa', built: 'bbbbbbbbbbbbbbbb', canUpdate: true, updating: null, last: null,
@@ -119,6 +121,35 @@ class FakeService extends EventEmitter {
   }
   async setUsage(change: {enabled?: boolean; window?: string}) {
     this.usage.push(change);
+  }
+  async setSpeechProvider(key: string) {
+    if (key !== 'system' && key !== 'echo-speech/echo') throw new Error(`The speech provider "${key}" is not installed.`);
+    this.pluginActions.push(`speech:${key}`);
+  }
+  async testSpeech(key?: string) {
+    this.speechTests.push(key);
+  }
+  async plugins() {
+    return [{id: 'echo-speech', name: 'Echo Speech', version: '1.0.0', state: 'running',
+             settings: [{key: 'apiKey', type: 'secret', title: 'API key'}], values: {apiKey: {set: true}}}];
+  }
+  async enablePlugin(id: string, consent: {version: string}) {
+    if (consent.version !== '1.0.0') throw new Error('Review and accept what Echo Speech 1.0.0 asks for before enabling it.');
+    this.pluginActions.push(`enable:${id}`);
+    return this.plugins();
+  }
+  async disablePlugin(id: string) {
+    this.pluginActions.push(`disable:${id}`);
+    return this.plugins();
+  }
+  async restartPlugin(id: string) {
+    this.pluginActions.push(`restart:${id}`);
+    return this.plugins();
+  }
+  async setPluginSettings(id: string, values: unknown) {
+    if ((values as {voice?: unknown})?.voice === 'z') throw new Error('Voice is not one of the choices.');
+    this.pluginActions.push(`settings:${id}:${JSON.stringify(values)}`);
+    return this.plugins();
   }
   async setVoiceNotifications(mode: string) {
     this.voice.push(mode);
@@ -467,6 +498,32 @@ test('validates and performs actions', async () => {
     assert.equal((await call('/api/voice', {method: 'POST', headers: json, body: '{"mode":"loud"}'})).status, 400);
     assert.equal((await call('/api/voice', {method: 'POST', headers: json, body: '{"mode":"milestones"}'})).status, 200);
     assert.equal((await call('/api/voice', {method: 'POST', headers: json, body: '{"mode":"contextual"}'})).status, 200);
+
+    // Plugins: listed with secrets redacted, enabled only with consent, and never installed over HTTP.
+    const plugins = await call('/api/plugins');
+    assert.equal(plugins.status, 200);
+    assert.deepEqual(JSON.parse(plugins.body)[0].values, {apiKey: {set: true}});
+    const consent = {version: '1.0.0', permissions: ['speech.provide'], network: ['api.example.com']};
+    assert.equal((await call('/api/plugins/echo-speech/enable', {method: 'POST', headers: json, body: '{}'})).status, 400);
+    assert.equal((await call('/api/plugins/echo-speech/enable', {method: 'POST', headers: json,
+      body: JSON.stringify({consent: {...consent, version: '0.9.0'}})})).status, 409);
+    assert.equal((await call('/api/plugins/echo-speech/enable', {method: 'POST', headers: json,
+      body: JSON.stringify({consent})})).status, 200);
+    assert.equal((await call('/api/plugins/echo-speech/settings', {method: 'POST', headers: json,
+      body: JSON.stringify({values: {voice: 'z'}})})).status, 400);
+    assert.equal((await call('/api/plugins/echo-speech/settings', {method: 'POST', headers: json,
+      body: JSON.stringify({values: {apiKey: 'sk-1'}})})).status, 200);
+    assert.equal((await call('/api/plugins/echo-speech/restart', {method: 'POST'})).status, 200);
+    assert.equal((await call('/api/plugins/echo-speech/disable', {method: 'POST'})).status, 200);
+    assert.equal((await call('/api/plugins/Bad/disable', {method: 'POST'})).status, 404);
+    assert.equal((await call('/api/plugins/install', {method: 'POST', headers: json, body: '{}'})).status, 404);
+    assert.equal((await call('/api/plugins', {method: 'POST', headers: json, body: '{}'})).status, 404);
+    assert.equal((await call('/api/speech', {method: 'POST', headers: json, body: '{"provider":"gone/voice"}'})).status, 409);
+    assert.equal((await call('/api/speech', {method: 'POST', headers: json, body: '{"provider":"echo-speech/echo"}'})).status, 200);
+    assert.equal((await call('/api/speech/test', {method: 'POST', headers: json, body: '{}'})).status, 200);
+    assert.deepEqual(service.pluginActions, ['enable:echo-speech', 'settings:echo-speech:{"apiKey":"sk-1"}',
+      'restart:echo-speech', 'disable:echo-speech', 'speech:echo-speech/echo']);
+    assert.deepEqual(service.speechTests, [undefined]);
     assert.deepEqual(service.voice, ['milestones', 'contextual']);
     assert.equal((await call('/api/desktop', {method: 'POST', headers: json, body: '{}'})).status, 400);
     assert.equal((await call('/api/desktop', {method: 'POST', headers: json, body: '{"visible":"no"}'})).status, 400);

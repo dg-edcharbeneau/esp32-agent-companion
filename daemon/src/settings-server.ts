@@ -13,6 +13,7 @@ import {isUsageWindow, usageWindows} from './usage-tracker.js';
 import {isOrientationOffset} from './orientation-settings.js';
 import {isVoiceNotificationMode} from './voice-notifications.js';
 import {isOnboardingChange, isOnboardingStep, SetupError} from './onboarding.js';
+import {isPluginConsent, type PluginConsent} from './plugin-store.js';
 
 export const defaultSettingsPort = 4667;
 const maxJsonBytes = 64 * 1024;
@@ -24,6 +25,7 @@ const staticFiles: Record<string, [string, string]> = {
   '/logo.svg': ['logo.svg', 'image/svg+xml'],
   '/styles.css': ['styles.css', 'text/css; charset=utf-8'],
   '/onboarding.js': ['onboarding.js', 'text/javascript; charset=utf-8'],
+  '/plugins.js': ['plugins.js', 'text/javascript; charset=utf-8'],
   '/onboarding.css': ['onboarding.css', 'text/css; charset=utf-8'],
   '/welcome-device.webp': ['welcome-device.webp', 'image/webp'],
   '/welcome-idle.mp4': ['welcome-idle.mp4', 'video/mp4'],
@@ -45,7 +47,8 @@ export interface SettingsServerOptions {
     | 'removeCharacter' | 'configureWifi' | 'scanWifi' | 'setConnection' | 'agentStatuses' | 'setAgentEnabled'
     | 'installAgentHook' | 'uninstallAgentHook' | 'setAgentBadgesEnabled' | 'setDesktop' | 'startDesktop'
     | 'stopDesktop' | 'setUsage' | 'setOrientationOffset' | 'updateFirmware' | 'installFirmwareOverUsb'
-    | 'setVoiceNotifications' | 'uninstall' | 'stopService' | 'restartService' | 'onboardingStatus' | 'updateOnboarding'
+    | 'setVoiceNotifications' | 'setSpeechProvider' | 'testSpeech' | 'plugins' | 'enablePlugin' | 'disablePlugin'
+    | 'restartPlugin' | 'setPluginSettings' | 'uninstall' | 'stopService' | 'restartService' | 'onboardingStatus' | 'updateOnboarding'
     | 'restartOnboarding' | 'navigateOnboarding' | 'installOnboardingAgents' | 'detectUsbDevices' | 'applyOnboardingDisplay'
     | 'setupOnboardingDevice' | 'finishOnboarding' | 'removeOnboardingAgent' | 'rescanAgents' | 'on' | 'off'>;
   port: number;
@@ -328,6 +331,38 @@ export function createSettingsServer(options: SettingsServerOptions): Server {
       await service.setVoiceNotifications(body.mode);
       return json(response, 200, {ok: true, mode: body.mode});
     }
+    if (method === 'POST' && segments.length === 1 && segments[0] === 'speech') {
+      const body = await readJson(request) as {provider?: unknown};
+      if (typeof body.provider !== 'string') throw new HttpError(400, 'Choose a speech provider.');
+      await asConflict(() => service.setSpeechProvider(body.provider as string));
+      return json(response, 200, {ok: true, provider: body.provider});
+    }
+    if (method === 'POST' && segments.length === 2 && segments[0] === 'speech' && segments[1] === 'test') {
+      const body = await readJson(request) as {provider?: unknown};
+      if (body.provider !== undefined && typeof body.provider !== 'string') throw new HttpError(400, 'Choose a speech provider.');
+      await asConflict(() => service.testSpeech(body.provider as string | undefined));
+      return json(response, 200, {ok: true});
+    }
+    if (segments[0] === 'plugins') {
+      if (method === 'GET' && segments.length === 1) return json(response, 200, await service.plugins());
+      // Plugins are added and removed with `npm run plugin`, never from this page.
+      const id = segments[1];
+      if (method === 'POST' && segments.length === 3 && id && /^[a-z0-9][a-z0-9-]{1,47}$/.test(id)) {
+        const action = segments[2];
+        if (action === 'enable') {
+          const body = await readJson(request) as {consent?: unknown};
+          if (!isPluginConsent(body.consent)) throw new HttpError(400, 'Review what the plugin asks for, then enable it.');
+          return json(response, 200, await asConflict(() => service.enablePlugin(id, body.consent as PluginConsent)));
+        }
+        if (action === 'disable') return json(response, 200, await asConflict(() => service.disablePlugin(id)));
+        if (action === 'restart') return json(response, 200, await asConflict(() => service.restartPlugin(id)));
+        if (action === 'settings') {
+          const body = await readJson(request) as {values?: unknown};
+          return json(response, 200, await asConflict(() => service.setPluginSettings(id, body.values), 400));
+        }
+      }
+      throw new HttpError(404, 'Not found.');
+    }
     if (method === 'POST' && segments.length === 1 && segments[0] === 'desktop') {
       const body = await readJson(request) as {visible?: unknown; backdrop?: unknown; sounds?: unknown; volume?: unknown;
         character?: unknown; deviceEnabled?: unknown};
@@ -412,6 +447,15 @@ export function createSettingsServer(options: SettingsServerOptions): Server {
       json(response, status, {error: error instanceof Error ? error.message : String(error)});
     });
   });
+}
+
+// Turns a refused action (a missing plugin, a provider that can't speak) into an answer the page can show.
+async function asConflict<T>(action: () => Promise<T>, status = 409): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    throw new HttpError(status, error instanceof Error ? error.message : String(error));
+  }
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {

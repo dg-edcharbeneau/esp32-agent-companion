@@ -60,6 +60,15 @@ export type DaemonRequest =
   | {type: 'setConnection'; mode: ConnectionMode}
   | {type: 'badges'; enabled: boolean}
   | {type: 'voice'; mode: 'off' | 'milestones' | 'chatty' | 'contextual'}
+  // "system" or "<plugin>/<provider>".
+  | {type: 'speech'; provider: string}
+  | {type: 'plugins'}
+  | {type: 'pluginEnable'; id: string; consent: {version: string; permissions: string[]; network: string[]}}
+  | {type: 'pluginDisable'; id: string}
+  | {type: 'pluginRestart'; id: string}
+  | {type: 'pluginSet'; id: string; values: Record<string, unknown>}
+  // Reads the plugin folder again after `plugin add` or `plugin remove` changed it.
+  | {type: 'pluginReload'}
   | {type: 'desktop'; visible?: boolean; backdrop?: string; sounds?: boolean; volume?: number; character?: string;
      deviceEnabled?: boolean}
   | {type: 'usage'; enabled?: boolean; window?: string}

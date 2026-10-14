@@ -69,6 +69,10 @@ import {loadWifiConfig, saveWifiConfig, validateWifiCredentials} from './wifi-co
 import {
   VoiceNotifier, type VoiceNotificationMode,
 } from './voice-notifications.js';
+import {PluginHost, type PluginInfo} from './plugin-host.js';
+import type {PluginConsent} from './plugin-store.js';
+import {pluginDirectory} from './paths.js';
+import {isSpeechProviderKey, SpeechProviders, type SpeechProviderInfo} from './speech-providers.js';
 import {OnboardingStore, SetupError, type OnboardingChange, type OnboardingState, type OnboardingStep} from './onboarding.js';
 
 export interface InstallState {
@@ -168,7 +172,17 @@ export interface CompanionStatus extends DaemonStatus {
   };
   voice: {
     mode: VoiceNotificationMode;
+    // Whether the selected speech provider can speak now, and if not, why.
     supported: boolean;
+    provider: string;
+    reason?: string;
+  };
+  speech: {
+    providers: SpeechProviderInfo[];
+  };
+  plugins: {
+    // Goes up when any plugin changes; the Settings page then fetches /api/plugins.
+    revision: number;
   };
 }
 
@@ -245,6 +259,9 @@ export class CompanionService extends EventEmitter {
   #lastFirmware: FirmwareStatus['last'] = null;
   readonly #usbInstaller: UsbFirmwareInstaller;
   readonly #voice: VoiceNotifier;
+  readonly #plugins: PluginHost;
+  readonly #speech: SpeechProviders;
+  #announcedState: DaemonStatus['state'] = 'idle';
   #release: ReleaseFirmware | null = null;
   // A character to install again when the device starts the new firmware later, for example after
   // the user power-cycles a device that stayed in download mode.
@@ -273,7 +290,8 @@ export class CompanionService extends EventEmitter {
               firmwareImage: () => FirmwareImage | null = builtFirmwareReader(),
               usbInstaller: UsbFirmwareInstaller = {releases: new FirmwareReleases(), flash: runUsbFlasher},
               onboarding = new OnboardingStore(process.env.AGENT_COMPANION_ONBOARDING
-                ?? join(agentContext.dataDir, 'onboarding.json'))) {
+                ?? join(agentContext.dataDir, 'onboarding.json')),
+              plugins?: PluginHost) {
     super();
     this.#transport = transport;
     this.#coordinator = coordinator;
@@ -285,8 +303,25 @@ export class CompanionService extends EventEmitter {
     this.#usageTracker = usageTracker;
     this.#firmwareImage = firmwareImage;
     this.#usbInstaller = usbInstaller;
+    this.#plugins = plugins ?? new PluginHost({
+      directory: pluginDirectory(),
+      hostVersion: this.#service.version,
+      services: {
+        status: () => ({
+          state: this.#coordinator.state,
+          connected: this.#transport.connected,
+          transport: this.#transport.transport,
+          wifi: this.#transport.network?.connected === true,
+          voiceMode: this.#display.voiceNotifications,
+        }),
+        narrate: text => this.narrate(text),
+      },
+    });
+    this.#plugins.on('change', () => this.emit('change'));
+    this.#speech = new SpeechProviders(this.#plugins, () => this.#display.speechProvider);
     this.#voice = new VoiceNotifier(this.#transport, this.#display.voiceNotifications, {
       available: () => this.#transport.network?.connected === true,
+      synthesizer: this.#speech,
     });
     this.#onboarding = onboarding;
   }
@@ -404,10 +439,13 @@ export class CompanionService extends EventEmitter {
         lines: this.#deviceUsageLines(),
         summary: this.#display.showUsage ? usageLines(this.#usageTotals) : [],
       },
-      voice: {
-        mode: this.#display.voiceNotifications,
-        supported: process.platform === 'darwin',
-      },
+      voice: (() => {
+        const provider = this.#speech.current();
+        return {mode: this.#display.voiceNotifications, supported: provider.available,
+                provider: provider.key, reason: provider.reason};
+      })(),
+      speech: {providers: this.#speech.list()},
+      plugins: {revision: this.#plugins.revision},
       service: this.#service,
       wifiPaired: this.#wifiPaired,
       deviceUsed: this.deviceUsed,
@@ -453,6 +491,7 @@ export class CompanionService extends EventEmitter {
       this.#lastAgentEvents.set(agent, Date.now());
       this.syncBadges();
       this.#usageAfterHook();
+      this.#plugins.notifyAgentEvent(agent, event);
       this.emit('change');
     }
     return accepted;
@@ -551,6 +590,65 @@ export class CompanionService extends EventEmitter {
 
   announceState(state: DaemonStatus['state']): void {
     this.#voice.stateChanged(state);
+    if (state !== this.#announcedState) this.#plugins.notifyState(state, this.#announcedState);
+    this.#announcedState = state;
+  }
+
+  // Speech from the selected provider: the system voice, or a plugin's.
+  get speechSynthesizer(): SpeechProviders {
+    return this.#speech;
+  }
+
+  async setSpeechProvider(key: string): Promise<void> {
+    if (!isSpeechProviderKey(key) || !this.#speech.list().some(provider => provider.key === key))
+      throw new Error(`The speech provider "${key}" is not installed.`);
+    this.#display = {...this.#display, speechProvider: key};
+    await saveDisplaySettings(this.#display);
+    this.emit('change');
+  }
+
+  // Plays a short line with a provider (the selected one by default) so the user can hear it.
+  async testSpeech(key: string = this.#display.speechProvider): Promise<void> {
+    if (!this.#transport.network?.connected) throw new Error('Speech needs the device connected over Wi-Fi.');
+    await this.#transport.speak(await this.#speech.synthesizeWith(key, 'This is Agent Buddy.', 'test'));
+  }
+
+  plugins(): Promise<PluginInfo[]> {
+    return this.#plugins.list();
+  }
+
+  // Starts the enabled plugins. Called once the device transport is up.
+  startPlugins(): Promise<void> {
+    return this.#plugins.load();
+  }
+
+  // Reads the plugin folder again after a plugin is added or removed.
+  reloadPlugins(): Promise<void> {
+    return this.#plugins.load();
+  }
+
+  stopPlugins(): Promise<void> {
+    return this.#plugins.stopAll();
+  }
+
+  async enablePlugin(id: string, consent: PluginConsent): Promise<PluginInfo[]> {
+    await this.#plugins.enable(id, consent);
+    return this.#plugins.list();
+  }
+
+  async disablePlugin(id: string): Promise<PluginInfo[]> {
+    await this.#plugins.disable(id);
+    return this.#plugins.list();
+  }
+
+  async restartPlugin(id: string): Promise<PluginInfo[]> {
+    await this.#plugins.restart(id);
+    return this.#plugins.list();
+  }
+
+  async setPluginSettings(id: string, change: unknown): Promise<PluginInfo[]> {
+    await this.#plugins.setSettings(id, change);
+    return this.#plugins.list();
   }
 
   narrate(text: unknown): Promise<void> {

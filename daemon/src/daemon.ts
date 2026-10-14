@@ -16,6 +16,7 @@ import {desktopBackdrops, isDesktopBackdrop, isDesktopVolume} from './display-se
 import {isVoiceNotificationMode} from './voice-notifications.js';
 import {isUsageWindow, usageWindows} from './usage-tracker.js';
 import {createSpeechSynthesizer, type SpeechSynthesizer, validateSpeechText} from './speech.js';
+import {isPluginConsent} from './plugin-store.js';
 
 const autoInstallRetryMs = 5 * 60 * 1000;
 
@@ -86,9 +87,12 @@ export async function runDaemon(): Promise<void> {
   await transport.start(preparingUsb ? 'auto' : connectionMode, service.deviceEnabled, preparingUsb ? setup.port : null);
   console.log(`[daemon] listening ${path}`);
   settingsUrl = await startSettingsServer(companion);
+  // Plugins start last, so a slow or broken one never delays the device or the settings page.
+  void companion.startPlugins().catch(error => console.error(`[plugins] ${error instanceof Error ? error.message : String(error)}`));
 
   const shutdown = async () => {
     companion.stopUsage();
+    await companion.stopPlugins();
     coordinator.close();
     await store.flush(coordinator.snapshot());
     await transport.stop();
@@ -163,7 +167,7 @@ export function handleSocket(socket: Socket, coordinator: StateCoordinator, tran
         reply(transport.setStateConfirmed(coordinator.state).then(() => service.status()));
       } else if (request.type === 'speak') {
         socket.setTimeout(60_000, () => socket.destroy());
-        reply(speakText(request.text, transport));
+        reply(speakText(request.text, transport, service.speechSynthesizer));
       } else if (request.type === 'narrate') {
         socket.setTimeout(60_000, () => socket.destroy());
         reply(service.narrate(request.text).then(() => ({ok: true})));
@@ -195,6 +199,25 @@ export function handleSocket(socket: Socket, coordinator: StateCoordinator, tran
         reply(service.setConnection(mode).then(() => ({ok: true, mode})));
       } else if (request.type === 'badges' && typeof request.enabled === 'boolean') {
         reply(service.setAgentBadgesEnabled(request.enabled).then(() => ({ok: true, enabled: request.enabled})));
+      } else if (request.type === 'speech' && typeof request.provider === 'string') {
+        reply(service.setSpeechProvider(request.provider).then(() => ({ok: true, provider: request.provider})));
+      } else if (request.type === 'plugins') {
+        reply(service.plugins());
+      } else if (request.type === 'pluginEnable' && typeof request.id === 'string') {
+        if (!isPluginConsent(request.consent)) throw new Error('Plugin consent is missing or invalid.');
+        socket.setTimeout(30_000, () => socket.destroy());
+        reply(service.enablePlugin(request.id, request.consent));
+      } else if (request.type === 'pluginDisable' && typeof request.id === 'string') {
+        socket.setTimeout(30_000, () => socket.destroy());
+        reply(service.disablePlugin(request.id));
+      } else if (request.type === 'pluginRestart' && typeof request.id === 'string') {
+        socket.setTimeout(30_000, () => socket.destroy());
+        reply(service.restartPlugin(request.id));
+      } else if (request.type === 'pluginSet' && typeof request.id === 'string') {
+        reply(service.setPluginSettings(request.id, request.values));
+      } else if (request.type === 'pluginReload') {
+        socket.setTimeout(30_000, () => socket.destroy());
+        reply(service.reloadPlugins().then(() => service.plugins()));
       } else if (request.type === 'voice' && isVoiceNotificationMode(request.mode)) {
         reply(service.setVoiceNotifications(request.mode).then(() => ({ok: true, mode: request.mode})));
       } else if (request.type === 'desktop') {

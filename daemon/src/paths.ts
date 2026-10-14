@@ -88,6 +88,24 @@ export function userCharacterDirectory(): string {
   return join(defaultDataDirectory(process.platform, homedir(), process.env), 'characters');
 }
 
+// Installed plugins, one folder each. Kept outside the runtime folder the desktop app replaces.
+export function pluginDirectory(): string {
+  if (process.env.AGENT_COMPANION_PLUGINS) return process.env.AGENT_COMPANION_PLUGINS;
+  return join(defaultDataDirectory(process.platform, homedir(), process.env), 'plugins');
+}
+
+// Each plugin's settings, secrets and data, kept apart from its code so an update keeps them.
+export function pluginStateDirectory(): string {
+  if (process.env.AGENT_COMPANION_PLUGIN_STATE) return process.env.AGENT_COMPANION_PLUGIN_STATE;
+  return join(defaultDataDirectory(process.platform, homedir(), process.env), 'plugin-state');
+}
+
+// Which plugins are enabled, what the user consented to, and which are quarantined.
+export function pluginRegistryPath(): string {
+  if (process.env.AGENT_COMPANION_PLUGIN_REGISTRY) return process.env.AGENT_COMPANION_PLUGIN_REGISTRY;
+  return join(defaultDataDirectory(process.platform, homedir(), process.env), 'plugins.json');
+}
+
 export function settingsInfoPath(): string {
   if (process.env.AGENT_COMPANION_SETTINGS_INFO) return process.env.AGENT_COMPANION_SETTINGS_INFO;
   return join(defaultDataDirectory(process.platform, homedir(), process.env), 'settings.json');
