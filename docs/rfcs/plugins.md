@@ -2,7 +2,7 @@
 
 **Status:** proposal, with a working prototype
 **Authors:** Ed Charbeneau, for discussion with Dan Wahlin and Brady Gaster
-**Prototype:** the `plugin-poc` branch (core host) and `agent-buddy-deepgram-speech` (first plugin)
+**Prototype:** [core plugin host](https://github.com/dg-edcharbeneau/esp32-agent-companion/tree/plugin-poc) (the `plugin-poc` branch; [just the plugin commits](https://github.com/dg-edcharbeneau/esp32-agent-companion/compare/ad07f91...plugin-poc) on top of #12) and the [Deepgram Speech plugin](https://github.com/dg-edcharbeneau/agent-buddy-deepgram-speech/tree/plugin-poc)
 
 ## Why
 
@@ -42,7 +42,39 @@ Naming both surfaces settles where things go. An MCP server is started by the ag
 
 ## The contract
 
-The full reference, for authors and coding agents, is [docs/plugins.md](../plugins.md). In short:
+The full reference, for authors and coding agents, is [docs/plugins.md](https://github.com/dg-edcharbeneau/esp32-agent-companion/blob/plugin-poc/docs/plugins.md), with a [JSON schema for the manifest](https://github.com/dg-edcharbeneau/esp32-agent-companion/blob/plugin-poc/docs/schemas/plugin-manifest-v1.json). The first plugin's manifest:
+
+```json
+{
+  "manifestVersion": 1,
+  "id": "deepgram-speech",
+  "name": "Deepgram Speech",
+  "version": "0.1.0",
+  "api": "1.0",
+  "runtime": "node",
+  "main": "main.mjs",
+  "permissions": ["speech.provide"],
+  "network": ["api.deepgram.com"],
+  "contributes": {
+    "speechProviders": [{"id": "flux", "name": "Deepgram Flux"}],
+    "settings": [
+      {"key": "apiKey", "type": "secret", "title": "Deepgram API key", "required": true},
+      {"key": "voice", "type": "select", "title": "Voice", "default": "flux-haley-en", "options": ["…"]}
+    ]
+  }
+}
+```
+
+Speaking one line. Audio comes back as mono 24 kHz signed 16-bit PCM, at most 15 seconds, which is exactly what the device's `/speech` stream plays:
+
+```text
+companion → plugin  {"jsonrpc":"2.0","id":7,"method":"speech/synthesize",
+                     "params":{"provider":"flux","text":"All done.","purpose":"notification"}}
+plugin → companion  {"jsonrpc":"2.0","id":7,"result":{"audio":{"encoding":"s16le",
+                     "sampleRate":24000,"channels":1,"data":"<base64>"}}}
+```
+
+In short:
 
 - **Host → plugin:**
   - lifecycle: `initialize` / `initialized`, `$/ping`, `shutdown` / `exit`
@@ -101,6 +133,23 @@ This is the same trust level as editor extensions: code the user chose to instal
   - Narration written by an LLM or a service becomes a hosted plugin that subscribes to `events/agent` and calls `voice/narrate`.
 - **Boards.** Boards are compile-time firmware (`firmware/boards.json` plus `src/boards/<dir>`), so daemon plugins can't add them. That needs its own RFC: a documented driver interface, a contribution guide and a CI build matrix. v1 helps only by letting plugins check device capabilities rather than board names.
 
+## The prototype
+
+Everything above exists and was tested on a Waveshare 1.75-C.
+
+- **Core** ([`plugin-poc`](https://github.com/dg-edcharbeneau/esp32-agent-companion/tree/plugin-poc), built on #12):
+  - the plugin host, a Plugins tab, a voice picker and `npm run plugin`
+  - a [template plugin](https://github.com/dg-edcharbeneau/esp32-agent-companion/tree/plugin-poc/plugins/template) with an `AGENTS.md` checklist for coding agents
+  - `npm run plugin check`, which runs a plugin under the same sandbox as the host and prints "All checks passed" when it follows the rules
+- **[Deepgram Speech plugin](https://github.com/dg-edcharbeneau/agent-buddy-deepgram-speech/tree/plugin-poc)**, in its own repository: one voice provider, eight Flux options and an API key setting.
+- **Tests:** 324 core tests, 3 template tests and 8 plugin tests pass. The conformance check passes with and without a key; with a key it fetched real Deepgram audio.
+- **On the device:**
+  - A line spoke clearly through the plugin.
+  - Killing the plugin, it restarted in about 2 seconds.
+  - With the key removed, the voice explained what to fix.
+  - The key never appeared in status or the logs.
+- **Size:** the core contains no Deepgram code, and the firmware fell from 76% to 69% of flash.
+
 ## Decisions for Dan and Brady
 
 1. **Sidecar processes** speaking stdio JSON-RPC, rather than in-process modules.
@@ -110,8 +159,8 @@ This is the same trust level as editor extensions: code the user chose to instal
 
 ## Rollout
 
-1. **The 1.75-C audio fix** goes in as its own PR (branch `fix-175c-audio-clock`).
-2. **Land #12** (generic speech streaming and voice notifications).
-3. **Land the plugin host:** `plugin-poc`, cleaned up into a PR that depends on #12.
-4. **Publish `agent-buddy-deepgram-speech`** from its own repository as the first plugin.
-5. **API 1.1:** audio capture for Agent Mic.
+1. **The 1.75-C audio fix.** Open as #30.
+2. **Land #12** (generic speech streaming and voice notifications). Open.
+3. **Land the plugin host.** Prototype built: `plugin-poc`, to be cleaned up into a PR that depends on #12.
+4. **Publish `agent-buddy-deepgram-speech`** from its own repository as the first plugin. Prototype built.
+5. **API 1.1:** audio capture for Agent Mic. Next.
