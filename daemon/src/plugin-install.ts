@@ -21,7 +21,7 @@ export function isGitSource(source: string): boolean {
 }
 
 // Native add-ons break when the desktop app updates Node, and are not allowed in v1.
-async function findNativeAddon(folder: string): Promise<string | null> {
+export async function findNativeAddon(folder: string): Promise<string | null> {
   for (const entry of await readdir(folder, {withFileTypes: true})) {
     const path = join(folder, entry.name);
     if (entry.isDirectory()) {

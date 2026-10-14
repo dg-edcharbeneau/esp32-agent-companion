@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DanWahlin/agent-buddy/main/docs/schemas/plugin-manifest-v1.json",
+  "manifestVersion": 1,
+  "id": "template-tone",
+  "name": "Template Tone",
+  "version": "0.1.0",
+  "description": "A starting point for speech plugins: answers every line with a short tone.",
+  "publisher": "Agent Buddy",
+  "license": "MIT",
+  "api": "1.0",
+  "runtime": "node",
+  "main": "main.mjs",
+  "permissions": ["speech.provide"],
+  "network": [],
+  "contributes": {
+    "speechProviders": [
+      {"id": "tone", "name": "Tone", "description": "A short beep in place of words."}
+    ],
+    "settings": [
+      {"key": "pitch", "type": "select", "title": "Pitch", "default": "low",
+       "options": [{"value": "low", "label": "Low"}, {"value": "high", "label": "High"}]}
+    ]
+  }
+}

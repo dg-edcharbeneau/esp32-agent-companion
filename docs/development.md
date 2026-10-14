@@ -645,6 +645,37 @@ the 183 x 148-pixel oval radii. It leaves more room around the head and stays
 inside the display, including the full leading ball. Every Working pose retains
 more than twelve pixels between its nonblack artwork and the largest ball.
 
+## Plugin host
+
+Third-party features run as plugins, not in core. The reference for authors is
+[plugins.md](plugins.md); the design and its trade-offs are in
+[rfcs/plugins.md](rfcs/plugins.md). In the daemon:
+
+- **`plugin-manifest.ts`** validates `agent-buddy.plugin.json` and setting
+  changes. It is the authoritative copy of the rules in
+  `schemas/plugin-manifest-v1.json`.
+- **`plugin-rpc.ts`** is the newline-delimited JSON-RPC 2.0 peer, with the 4 MiB
+  line limit and the error codes.
+- **`plugin-host.ts`** discovers `<data>/plugins/*` and supervises one process
+  per enabled plugin:
+  - a `--permission` sandbox and a scrubbed environment
+  - handshake, pings, backoff and quarantine
+  - permission checks on host calls, routing of `speech/synthesize`, and state
+    and agent events
+- **`plugin-store.ts`** keeps `<data>/plugins.json` (enabled, consent,
+  quarantined, source) and each plugin's settings and 0600 secrets under
+  `<data>/plugin-state/<id>/`.
+- **`plugin-install.ts`** copies a folder or shallow-clones a git URL into
+  place without running anything.
+- **`speech-providers.ts`** is the registry behind `voice.provider`: the system
+  voice plus `<plugin>/<provider>` keys. Voice notifications, `speak`, narration
+  and **Play test** all use it.
+
+The daemon starts plugins after the device transport and Settings server are
+up, and stops them before the transport on shutdown. `tools/plugin-check.mjs`
+runs a plugin under the same flags and environment as the host, and is what
+`npm run plugin check` runs.
+
 ## Audio cues
 
 Five original 24 kHz, 16-bit mono PCM cues live under `assets/audio/`.

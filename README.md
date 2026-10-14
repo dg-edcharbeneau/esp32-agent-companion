@@ -47,6 +47,8 @@ desktop, with or without the device.
 - [AI credits and tokens](#ai-credits-and-tokens)
 - [Characters](#characters)
 - [Wi-Fi](#wi-fi)
+- [Speech](#speech)
+- [Plugins](#plugins)
 - [Update](#update)
 - [Command reference](#command-reference)
 - [Troubleshooting](#troubleshooting)
@@ -826,6 +828,30 @@ as a recording. The authenticated request stays on the local network, but like
 the rest of the Wi-Fi control protocol it uses plain HTTP, so use speech only on
 a trusted network.
 
+**Other voices.** Speech plugins add voices from other services, on any
+operating system. Choose one in **Settings > Agents > Voice notifications >
+Voice**, press **Play test**, or run `npm run speech` to list voices and
+`npm run speech <plugin>/<voice>` to pick one. A plugin voice sends each spoken
+line to that plugin's service.
+
+## Plugins
+
+Plugins add features that Agent Buddy doesn't build in, such as voices from a
+speech service. Each one is maintained by its author, runs as its own program,
+and can't crash the companion service.
+
+```bash
+npm run plugin add https://github.com/<owner>/<plugin>   # or a local folder
+npm run plugin enable <id>     # shows what it asks for, then enables it
+npm run plugin list
+npm run plugin remove <id>
+```
+
+You can also enable plugins and fill in their settings, such as an API key,
+in **Settings > Plugins**. Installing a plugin never runs its code, and secrets
+are stored only on this computer. To build a plugin, start from
+[plugins/template](plugins/template) and read [docs/plugins.md](docs/plugins.md).
+
 ## Update
 
 **Companion daemon.** If the desktop app installed it, install the new release
@@ -881,6 +907,8 @@ Run these from the repository folder.
 | `npm run speak "<text>"` | Speaks up to 15 seconds of locally synthesized audio over Wi-Fi (macOS) |
 | `npm run narrate "<text>"` | Sends a validated contextual line when Contextual mode is enabled |
 | `npm run voice off\|milestones\|chatty\|contextual` | Controls automatic and contextual spoken notifications |
+| `npm run speech [PROVIDER]` | Lists voices, or picks one: `system` or `<plugin>/<voice>` |
+| `npm run plugin list\|add\|enable\|disable\|restart\|set\|remove\|check` | Manages plugins; see [docs/plugins.md](docs/plugins.md) |
 | `npm run agents` | Lists agents with their versions and hook status |
 | `npm run agents enable\|disable <agent>` | Lets an agent drive the device, or stops it |
 | `npm run agents install\|uninstall <agent>` | Installs or removes one agent's hook |
