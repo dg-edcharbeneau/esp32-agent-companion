@@ -1,4 +1,5 @@
 import {Onboarding} from './onboarding.js';
+import {PluginsPanel} from './plugins.js';
 
 const $ = id => document.getElementById(id);
 const stateNames = {
@@ -41,6 +42,8 @@ const onboarding = new Onboarding({
   loadPreview: (id, signal) => api(`/api/characters/${encodeURIComponent(id)}/preview-pack`, {binary: true, signal}),
   refresh: refreshStatus, reloadCharacters: loadCharacters, notify: toast,
 });
+
+const pluginsPanel = new PluginsPanel({api, confirm: confirmAction, toast, list: () => $('plugins')});
 
 async function refreshStatus() {
   const next = await api('/api/status');
@@ -329,8 +332,9 @@ function renderStatus() {
     voiceMode.value = status.voice?.mode ?? 'off';
     voiceMode.disabled = status.voice?.supported === false;
     voiceMode.title = status.voice?.supported === false
-      ? 'Voice notifications currently require macOS.' : '';
+      ? status.voice?.reason ?? 'The selected voice cannot speak right now.' : '';
   }
+  renderSpeech();
 
   for (const button of document.querySelectorAll('#modes button')) {
     button.setAttribute('aria-checked', String(button.dataset.mode === status.mode));
@@ -1296,6 +1300,59 @@ $('voice-mode')?.addEventListener('change', async event => {
   }
 });
 
+let speechPending = false;
+
+// The voice list: the system voice and every voice a plugin adds, with why one can't speak yet.
+function renderSpeech() {
+  const select = $('speech-provider');
+  if (!select || speechPending || !status?.speech) return;
+  const providers = status.speech.providers ?? [];
+  const selected = status.voice?.provider ?? 'system';
+  const options = providers.map(provider => {
+    const option = document.createElement('option');
+    option.value = provider.key;
+    option.textContent = provider.available ? provider.name : `${provider.name} (unavailable)`;
+    return option;
+  });
+  if (!providers.some(provider => provider.key === selected)) {
+    const missing = document.createElement('option');
+    missing.value = selected;
+    missing.textContent = `${selected} (not installed)`;
+    options.push(missing);
+  }
+  select.replaceChildren(...options);
+  select.value = selected;
+  $('speech-test').disabled = status.voice?.supported === false;
+  $('speech-provider-hint').textContent = status.voice?.supported === false
+    ? status.voice.reason ?? 'The selected voice cannot speak right now.'
+    : 'The system voice speaks on this Mac. Speech plugins add other voices.';
+}
+
+$('speech-provider')?.addEventListener('change', async event => {
+  speechPending = true;
+  try {
+    await api('/api/speech', {method: 'POST', type: 'application/json', body: JSON.stringify({provider: event.target.value})});
+    toast('Voice changed.', 'success');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    speechPending = false;
+    await refreshStatus().catch(() => undefined);
+  }
+});
+
+$('speech-test')?.addEventListener('click', async event => {
+  event.target.disabled = true;
+  try {
+    await api('/api/speech/test', {method: 'POST', type: 'application/json', body: '{}'});
+    toast('Sent a test line to the device.', 'success');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    event.target.disabled = false;
+  }
+});
+
 let pendingActions = new Map();
 
 // Lists the agents that still need a one-time step and announces each one as it finishes.
@@ -1406,6 +1463,7 @@ function onStatus(next) {
   renderFirmware();
   renderAgents();
   renderSetup();
+  pluginsPanel.update(next);
   if (previous?.onboarding?.completed === false) renderCharacters();
 }
 

@@ -271,6 +271,7 @@
       <button type="button" role="tab" id="tab-agents" aria-controls="panel-agents" aria-selected="false" tabindex="-1">Agents</button>
       <button type="button" role="tab" id="tab-wifi" aria-controls="panel-wifi" aria-selected="false" tabindex="-1">Device<span id="device-update-badge" class="update-dot" hidden><span class="visually-hidden">, firmware update available</span></span></button>
       <button type="button" role="tab" id="tab-desktop" aria-controls="panel-desktop" aria-selected="false" tabindex="-1">Desktop</button>
+      <button type="button" role="tab" id="tab-plugins" aria-controls="panel-plugins" aria-selected="false" tabindex="-1">Plugins</button>
     </div>
 
     <section id="panel-characters" class="card panel" role="tabpanel" aria-labelledby="tab-characters" tabindex="0">
@@ -334,6 +335,16 @@
             <option value="chatty">Chatty</option>
             <option value="contextual">Contextual</option>
           </select>
+        </div>
+        <div class="setting-row static">
+          <span>
+            <strong id="speech-provider-label">Voice</strong>
+            <span class="hint" id="speech-provider-hint">The system voice speaks on this Mac. Speech plugins add other voices.</span>
+          </span>
+          <span class="row-actions">
+            <select id="speech-provider" aria-labelledby="speech-provider-label"></select>
+            <button type="button" id="speech-test" class="secondary">Play test</button>
+          </span>
         </div>
       </section>
       <section class="group" aria-labelledby="agents-title">
@@ -444,6 +455,12 @@
         </span>
         </div>
       </details>
+    </section>
+
+    <section id="panel-plugins" class="card panel" role="tabpanel" aria-labelledby="tab-plugins" tabindex="0" hidden>
+      <p class="hint">Plugins add features that Agent Buddy doesn't build in, such as other voices. Each runs as its own
+        program and is maintained by its author. Add or remove them from a terminal with <code>npm run plugin</code>.</p>
+      <ul id="plugins" class="agents plugins" aria-live="polite"></ul>
     </section>
 
     <section id="panel-desktop" class="card panel" role="tabpanel" aria-labelledby="tab-desktop" tabindex="0" hidden>

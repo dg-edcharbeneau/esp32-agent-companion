@@ -2,7 +2,7 @@
 // Friendly entry point for `npm run setup|status|wifi|pair|character` from the repository root.
 import {spawn} from 'node:child_process';
 import {existsSync, readdirSync, readFileSync, statSync} from 'node:fs';
-import {dirname, join} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
 import {createInterface} from 'node:readline/promises';
 import {fileURLToPath} from 'node:url';
 
@@ -254,6 +254,25 @@ const commands = {
       : 'Voice notifications include agent-written contextual narration.');
   },
 
+  // Lists the voices, or picks one: "system", or "<plugin>/<provider>" from a speech plugin.
+  async speech(args) {
+    await cli(['speech', ...args.slice(0, 1)]);
+  },
+
+  // Adds, removes, enables and configures plugins. `check` runs the conformance checks on a plugin folder.
+  async plugin(args) {
+    // npm runs scripts from the repository root; a folder the user typed is relative to where they typed it.
+    const here = process.env.INIT_CWD ?? process.cwd();
+    const local = value => (/^(https:\/\/|git@|ssh:\/\/)/.test(value) ? value : resolve(here, value));
+    if (args[0] === 'check') {
+      if (!args[1]) throw new Error('Usage: npm run plugin check FOLDER');
+      await run(process.execPath, [join(root, 'tools', 'plugin-check.mjs'), local(args[1]), ...args.slice(2)],
+                {cwd: here});
+      return;
+    }
+    await cli(['plugin', ...(args[0] === 'add' && args[1] ? ['add', local(args[1]), ...args.slice(2)] : args)]);
+  },
+
   async agents(args) {
     const action = args[0]?.toLowerCase();
     const id = args[1]?.toLowerCase();
@@ -342,7 +361,7 @@ const commands = {
 const [name, ...args] = process.argv.slice(2);
 const command = commands[name];
 if (!command) {
-  console.error('Usage: npm run setup | settings | status | speak TEXT | narrate TEXT | voice [off|milestones|chatty|contextual] | agents | wifi [NAME] | pair CODE | character [NAME|PATH] | connection [auto|wifi|usb] | badges [on|off]');
+  console.error('Usage: npm run setup | settings | status | speak TEXT | narrate TEXT | voice [off|milestones|chatty|contextual] | speech [PROVIDER] | plugin list|add|remove|enable|disable|restart|set|check | agents | wifi [NAME] | pair CODE | character [NAME|PATH] | connection [auto|wifi|usb] | badges [on|off]');
   process.exit(2);
 }
 command(args).catch(error => {

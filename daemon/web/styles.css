@@ -381,6 +381,8 @@ code { background: var(--panel-2); padding: .1rem .35rem; border-radius: 6px; }
 .confirm p { margin: 0 0 1rem; white-space: pre-line; }
 .confirm #confirm-message { color: var(--muted); font-size: .9rem; line-height: 1.65; }
 .confirm .confirm-note { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: .8rem 1rem; color: var(--muted); font-size: .8rem; line-height: 1.5; }
+/* A plugin's permission list arrives as one line per item. */
+.confirm .confirm-note { white-space: pre-line; }
 .confirm { max-height: calc(100vh - 3rem); overflow: auto; }
 .confirm p { overflow-wrap: anywhere; }
 .confirm details { color: var(--muted); font-size: .8rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
@@ -524,3 +526,19 @@ code { background: var(--panel-2); padding: .1rem .35rem; border-radius: 6px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Plugins tab: cards like the agent list, with a settings form under the description. */
+.plugin { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.plugin.empty { display: block; }
+.plugin-body { min-width: 0; overflow-wrap: anywhere; }
+.plugin-body > .badge { margin-left: .5rem; }
+.plugin-body .hint { margin: .25rem 0 0; }
+.plugin-body a { color: var(--accent); font-size: .85rem; }
+.plugin-state.running { color: var(--good); border-color: var(--good); }
+.plugin-state.quarantined, .plugin-state.broken, .plugin-state.incompatible { color: var(--warn); border-color: var(--warn); }
+.plugin-message.problem { color: var(--warn); }
+.plugin-settings { display: grid; gap: .7rem; margin-top: .8rem; max-width: 28rem; }
+.plugin-settings .field { display: grid; gap: .3rem; color: var(--muted); font-size: .9rem; }
+.plugin-settings .field .hint { margin: 0; font-size: .8rem; }
+.plugin-settings button[type="submit"] { justify-self: start; }
+.plugin-settings button.small { justify-self: start; padding: .25rem .7rem; font-size: .8rem; }

@@ -10,6 +10,9 @@ import {cursorHookResponse} from './agents/cursor.js';
 import {agentRunsHeadless} from './agents/headless.js';
 import {isAgentId} from './agents/types.js';
 import {isVoiceNotificationMode} from './voice-notifications.js';
+import {addPlugin, removePlugin} from './plugin-install.js';
+import type {PluginInfo} from './plugin-host.js';
+import {createInterface} from 'node:readline';
 
 async function main(): Promise<void> {
   const [command, argument, file, ...options] = process.argv.slice(2);
@@ -103,6 +106,23 @@ async function main(): Promise<void> {
     if (!isVoiceNotificationMode(argument))
       throw new Error('Usage: agent-companion voice off|milestones|chatty|contextual');
     console.log(JSON.stringify(checked(await requestDaemon({type: 'voice', mode: argument}, 2000))));
+    return;
+  }
+  if (command === 'speech') {
+    if (!argument) {
+      const status = await requestDaemon({type: 'status'}, 5000) as {
+        voice?: {provider?: string}; speech?: {providers?: {key: string; name: string; available: boolean; reason?: string}[]}};
+      for (const provider of status.speech?.providers ?? []) {
+        const mark = provider.key === status.voice?.provider ? '*' : ' ';
+        console.log(`${mark} ${provider.key.padEnd(28)} ${provider.name}${provider.available ? '' : ` (${provider.reason})`}`);
+      }
+      return;
+    }
+    console.log(JSON.stringify(checked(await requestDaemon({type: 'speech', provider: argument}, 2000))));
+    return;
+  }
+  if (command === 'plugin') {
+    await pluginCommand(argument, file, options);
     return;
   }
   if (command === 'list-characters') {
@@ -235,6 +255,112 @@ async function readSecret(prompt: string): Promise<string> {
       }
     };
     process.stdin.on('data', onData);
+  });
+}
+
+const pluginUsage = 'Usage: agent-companion plugin list | add FOLDER|GIT-URL | remove ID [--keep-data] '
+  + '| enable ID [--yes] | disable ID | restart ID | set ID KEY [VALUE]';
+
+async function pluginList(): Promise<PluginInfo[]> {
+  const plugins = await requestDaemon({type: 'plugins'}, 5000);
+  if (!Array.isArray(plugins)) checked(plugins);
+  return plugins as PluginInfo[];
+}
+
+// A running daemon picks up added or removed plugins at once; a stopped one finds them when it starts.
+async function reloadPlugins(): Promise<void> {
+  try {
+    checked(await requestDaemon({type: 'pluginReload'}, 30_000));
+  } catch {
+    console.log('The companion service is not running; it loads the change when it starts.');
+  }
+}
+
+async function pluginCommand(action: string | undefined, id: string | undefined, rest: string[]): Promise<void> {
+  if (action === 'list' || action === undefined) {
+    const plugins = await pluginList();
+    if (!plugins.length) console.log('No plugins are installed. Add one with: npm run plugin add FOLDER|GIT-URL');
+    for (const plugin of plugins) {
+      const note = plugin.problem ?? (plugin.report && plugin.report.state !== 'ready' ? plugin.report.message : '');
+      console.log(`${plugin.id.padEnd(24)} ${(plugin.version ?? '?').padEnd(10)} ${plugin.state}${note ? ` - ${note}` : ''}`);
+    }
+    return;
+  }
+  if (!id) throw new Error(pluginUsage);
+  if (action === 'add') {
+    const result = await addPlugin(id);
+    const {manifest} = result;
+    console.log(result.previousVersion
+      ? `Updated ${manifest.name} from ${result.previousVersion} to ${manifest.version}.`
+      : `Added ${manifest.name} ${manifest.version}.`);
+    await reloadPlugins();
+    if (result.needsConsent)
+      console.log(`Review and enable it in Settings > Plugins, or run: npm run plugin enable ${manifest.id}`);
+    return;
+  }
+  if (action === 'remove') {
+    await removePlugin(id, {keepData: rest.includes('--keep-data')});
+    await reloadPlugins();
+    console.log(`Removed ${id}.`);
+    return;
+  }
+  const plugin = (await pluginList()).find(entry => entry.id === id);
+  if (!plugin) throw new Error(`No plugin named "${id}" is installed.`);
+  if (action === 'enable') {
+    console.log(`${plugin.name} ${plugin.version} runs as a separate program on this computer, with your user account.`);
+    console.log(`Permissions: ${plugin.permissions.join(', ') || 'none'}`);
+    console.log(`Network hosts: ${plugin.network.join(', ') || 'none'}`);
+    if (!rest.includes('--yes') && !/^y(es)?$/i.test(await ask('Enable it? [y/N] ')))
+      throw new Error('Not enabled.');
+    const consent = {version: plugin.version ?? '', permissions: plugin.permissions, network: plugin.network};
+    const result = await requestDaemon({type: 'pluginEnable', id, consent}, 30_000);
+    if (!Array.isArray(result)) checked(result);
+    console.log(`${plugin.name} is enabled.`);
+    return;
+  }
+  if (action === 'disable' || action === 'restart') {
+    const result = await requestDaemon({type: action === 'disable' ? 'pluginDisable' : 'pluginRestart', id}, 30_000);
+    if (!Array.isArray(result)) checked(result);
+    console.log(`${plugin.name} ${action === 'disable' ? 'is disabled' : 'restarted'}.`);
+    return;
+  }
+  if (action === 'set') {
+    const [key, value] = rest;
+    const field = plugin.settings.find(setting => setting.key === key);
+    if (!field) throw new Error(`${plugin.name} settings: ${plugin.settings.map(setting => setting.key).join(', ')}`);
+    let next: unknown;
+    if (field.type === 'secret') {
+      // Never from the command line, where it would land in shell history and the process list.
+      if (value !== undefined) throw new Error(`Type ${field.title} at the prompt, or pipe it in; don't pass it as an argument.`);
+      next = process.stdin.isTTY ? await ask(`${field.title}: `, true) : (await readStdin(4096)).trim();
+      if (!next) next = null;
+    } else {
+      if (value === undefined) throw new Error(`Usage: agent-companion plugin set ${id} ${key} VALUE`);
+      next = field.type === 'number' ? Number(value) : field.type === 'boolean' ? value === 'true' : value;
+    }
+    const result = await requestDaemon({type: 'pluginSet', id, values: {[key!]: next}}, 5000);
+    if (!Array.isArray(result)) checked(result);
+    console.log(`${field.title} ${next === null ? 'removed' : 'saved'}.`);
+    return;
+  }
+  throw new Error(pluginUsage);
+}
+
+// Asks on the terminal. A hidden prompt echoes nothing, for secrets.
+function ask(question: string, hidden = false): Promise<string> {
+  return new Promise(resolve => {
+    const prompt = createInterface({input: process.stdin, output: process.stdout, terminal: true});
+    if (hidden) {
+      const write = (prompt as unknown as {_writeToOutput: (text: string) => void})._writeToOutput;
+      (prompt as unknown as {_writeToOutput: (text: string) => void})._writeToOutput = text => {
+        if (text.includes(question)) write.call(prompt, question);
+      };
+    }
+    prompt.question(question, answer => {
+      prompt.close();
+      if (hidden) process.stdout.write('\n');
+      resolve(answer.trim());
+    });
   });
 }
 

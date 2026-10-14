@@ -33,6 +33,7 @@ test('web alignment controls initialize once and send confirmed settings', async
   const calls: Array<{path: string; offsetDegrees: number}> = [];
   const context = createContext({
     Onboarding: class { update() {} },
+    PluginsPanel: class { update() {} },
     document: {
       getElementById: element, querySelectorAll: () => [], addEventListener() {},
       documentElement: {dataset: {theme: 'light'}},
@@ -55,7 +56,7 @@ test('web alignment controls initialize once and send confirmed settings', async
     },
   });
   const text = readFileSync(new URL('../../web/app.js', import.meta.url), 'utf8');
-  runInContext(text.replace(/^import \{Onboarding\} from '\.\/onboarding\.js';\s*/, ''), context);
+  runInContext(text.replace(/^import [^\n]+\n/gm, ''), context);
   assert.equal(runInContext('typeof renderOrientation', context), 'function');
   assert.equal(element('orientation-right').listeners.get('click'), 1);
   assert.equal(element('voice-mode').listeners.get('change'), 1);
@@ -270,4 +271,11 @@ test('character catalog refreshes coalesce in-flight changes and retain a retry 
   await runInContext('loadCharacters()', context);
   assert.equal(runInContext('charactersRetryAt', context), 0);
   assert.equal(runInContext('characters.length', context), 1);
+});
+
+test('the Plugins tab renders plugin text without HTML and opens only https links', () => {
+  const source = readFileSync(new URL('../../web/plugins.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(/);
+  assert.match(source, /parsed\.protocol !== 'https:'/);
+  assert.match(source, /rel = 'noopener noreferrer'/);
 });
